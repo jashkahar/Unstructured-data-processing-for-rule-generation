@@ -1,0 +1,48 @@
+
+---
+
+## .cursorrules
+
+```plaintext
+# .cursorrules - Project-Specific AI Coding Guidelines
+
+# General Coding Standards:
+- Use Python 3.9+ with strict type hints.
+- Follow PEP8 coding conventions; ensure code is formatted and commented.
+- Write modular, testable code: each component must have clear boundaries and include unit test scaffolding.
+
+# Document Processing:
+- Ensure PDF parsing uses libraries like PyPDF2 or Unstructured.io.
+- Use pytesseract for OCR in image parsing.
+- When handling video content, extract key frames or transcribe audio as needed.
+
+# FDA Fact Checker:
+- Integrate the pre-existing FDA compliance module; do not attempt to rewrite FDA guidelines.
+- When generating output, include clear error messages if the document does not meet FDA requirements.
+
+# Pattern Analysis:
+- Use LLM or NLP libraries (spaCy/NLTK) to extract brand-specific patterns.
+- Emphasize extraction of recurring language/tone preferences present across multiple documents.
+- Document any assumptions made during analysis as inline comments.
+
+# Evaluation:
+- Merge FDA baseline rules and brand-specific pattern outputs, ensuring no rule conflicts.
+- Generate combined evaluation insights in a clear format that specifies differences between brand practices and FDA guidelines.
+
+# Rule Generation:
+- For each rule, include:
+    - A clear description (e.g., "Do not use hyperbolic claims such as 'miracle cure'")
+    - Supporting reasoning based on the analysis (e.g., "Approved materials avoid exaggerated language to maintain regulatory compliance")
+    - An explicit evaluation method (e.g., "Use regex matching to detect disallowed phrases in new promotional documents")
+- Output must be a well-structured JSON file with all rules, explanations, and testing methodologies.
+- If possible, generate unit test stubs for each new rule.
+
+# Rule Testing:
+- When applying rules to new content, ensure a compliance report is generated that outlines each rule's pass/fail result.
+- Include instructions to log detailed evaluation errors for debugging and future improvement.
+
+# Miscellaneous:
+- Use clear and concise inline comments to explain complex logic.
+- Leverage logging to capture errors and execution details.
+- Ensure all generated code is easily maintainable and adaptable for future enhancements.
+- In prompts, always reference the project PRD (PROJECT_REQUIREMENTS.md) and DESIGN.md for context.
