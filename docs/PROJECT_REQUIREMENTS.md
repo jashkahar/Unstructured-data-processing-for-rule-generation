@@ -1,105 +1,90 @@
-# Pharmaceutical Compliance Analysis System - Product Requirements Document
+# Pharmaceutical Compliance Analysis System – Product Requirements Document
 
 ## 1. Introduction
 
-The Pharmaceutical Compliance Analysis System is designed to analyze promotional materials for a pharmaceutical brand and derive brand-specific compliance rules that extend beyond baseline FDA guidelines. The system automates the extraction of text from multi-format documents (PDFs, images, and videos), checks content against FDA regulations, identifies unique brand preferences via natural language analysis, and generates a structured JSON output of additional compliance rules. This output will then be used to evaluate new promotional materials for compliance.
+The Pharmaceutical Compliance Analysis System is designed to analyze promotional materials for a pharmaceutical brand and derive brand-specific compliance rules that extend beyond standard FDA guidelines. In the initial phase, the system will focus solely on processing PDF documents. In future iterations, image and video parsing functionality may be added.
 
 ## 2. Objectives
 
-- **Automate Content Ingestion:** Extract text and metadata from PDFs, images (via OCR), and videos (via transcription).
-- **Baseline Compliance Verification:** Evaluate the extracted content against predefined FDA guidelines.
-- **Pattern Identification:** Analyze multiple documents to determine brand-specific language or design patterns.
-- **Rule Generation:** Combine baseline rules and extracted brand patterns to generate new, brand-specific compliance rules.
-- **Validation:** Apply the generated rules to new content and produce a compliance report.
-- **Output Structured Data:** Produce a machine-readable JSON file that encapsulates each derived rule, its rationale, and the method for future evaluation.
+- **Automate PDF Ingestion:** Extract text, structure, and metadata from PDF promotional materials using libraries such as PyPDF2 or Unstructured.io.
+- **Baseline Compliance Verification:** Evaluate the PDF content against predefined FDA regulatory guidelines.
+- **Brand-Specific Pattern Identification:** Analyze the extracted PDF content to detect patterns in language, tone, and layout that reflect the brand’s unique approach.
+- **Rule Generation:** Merge baseline FDA rules with the identified brand-specific patterns to produce detailed, granular compliance rules.
+- **Validation:** Apply the generated rules to sample PDF promotional materials and output a detailed compliance report.
+- **Output Structured Data:** Produce a machine-readable JSON file that encapsulates each derived rule along with detailed descriptions, supporting reasoning, and evaluation methods.
 
-## 3. Background
-
-Pharmaceutical promotional materials must adhere to FDA guidelines. However, individual brands often implement additional internal preferences regarding language, tone, and visual presentation. This system is designed to capture these additional nuances automatically from approved materials, reducing manual configuration and aligning new content with both FDA and brand-specific standards.
-
-## 4. Scope
+## 3. Scope
 
 ### In Scope
-- Parsing multi-format promotional materials (PDFs, images, videos).
-- Evaluating parsed content against established FDA compliance requirements.
-- Extracting recurring brand-specific patterns using an LLM/NLP.
-- Integrating both FDA baseline rules and identified brand-specific patterns to generate additional rules.
-- Testing new promotional materials against the generated rules.
-- Generating a JSON report that details derived rules along with descriptions, rationale, and evaluation methods.
+- Parsing PDF promotional materials (text extraction and metadata).
+- Evaluating parsed PDF content against standard FDA guidelines (using the FDA Fact Checker).
+- Extracting brand-specific patterns from the PDF content via NLP/LLM analysis.
+- Merging baseline FDA rules with the extracted brand patterns to generate refined compliance rules.
+- Testing these rules against new PDF-based promotional content.
+- Outputting a structured JSON file containing the generated rules and a compliance report.
 
-### Out of Scope
-- Implementing the baseline FDA guideline functions (assumed to be pre-existing).
-- Persistent storage for parsed content; the solution will operate as a real-time pipeline without centralized storage.
+### Out of Scope (for now)
+- Parsing images via OCR.
+- Video content transcription/extraction.
+- Persistent storage across processing steps (the system is a direct pipeline).
 
-## 5. Functional Requirements
+## 4. Functional Requirements
 
-- **Document Processing**
-  - Extract text and metadata from PDFs using libraries (e.g., PyPDF2, Unstructured.io).
-  - Process images with OCR (e.g., pytesseract) to retrieve embedded text.
-  - (Optional) Transcribe videos to extract dialogue and visual cues.
-
-- **Compliance Checking**
-  - Pass parsed PDF content into an FDA Fact Checker module.
-  - Output baseline compliance rules according to FDA standards.
+- **PDF Document Processing**
+  - Extract text, headings, and metadata from PDFs.
+  - Output a structured JSON/dictionary with document ID, segmented content, and metadata.
+  
+- **FDA Fact Checker**
+  - Evaluate the extracted text against FDA guidelines.
+  - Output a JSON structure listing individual FDA guideline compliance results (e.g., compliant/non-compliant).
 
 - **Pattern Analysis**
-  - Use an LLM or NLP to analyze aggregated text data.
-  - Identify consistent brand-specific language, tone, and visual preferences.
-  - Output structured findings detailing detected patterns.
+  - Analyze the aggregated text from PDFs to identify:
+    - **Keyword-based Patterns:** Frequency of specific terms (e.g., “real relief,” avoidance of “miracle cure”).
+    - **Semantic Tone:** Overall sentiment and language style (e.g., an emphasis on risk information).
+    - **Aesthetic/Formatting Cues:** Detect consistent formatting or layout styles present in the PDFs.
+  - Output a structured summary of these patterns.
 
-- **Rule Evaluation and Generation**
-  - Merge FDA baseline rules with brand-specific patterns.
-  - Generate additional rules that capture where brand requirements exceed FDA minimums.
-  - Format each rule with a description, reasoning, and a proposed evaluation method.
-  - Generate the final output in JSON format.
+- **Evaluation**
+  - Merge baseline FDA rules and brand-specific patterns.
+  - Identify where brand practices differ from FDA guidelines.
+  - Output combined evaluation insights.
+
+- **Rule Generation**
+  - Use the evaluation insights to generate brand-specific compliance rules.
+  - Each rule should include a description, the underlying reasoning, and an evaluation method.
+  - Produce a detailed JSON file with these rules.
 
 - **Rule Testing**
-  - Apply generated rules to new or sample promotional materials.
-  - Produce a compliance report indicating adherence or deviations against each rule.
+  - Apply the generated rules to new PDF promotional content.
+  - Generate a compliance report indicating whether each rule is met or violated.
 
-## 6. Non-Functional Requirements
+## 5. Non-Functional Requirements
 
 - **Performance:**  
-  The pipeline should process input documents and generate results in near-real time.
-
+  Process PDF documents and complete the entire compliance pipeline in near-real time.
 - **Modularity:**  
-  Each module (parsing, checking, pattern extraction, rule generation, evaluation) must be implemented as an independent, testable component.
-
+  Each component (parsing, FDA checking, pattern analysis, rule generation, and evaluation) must be developed and tested as an independent module.
 - **Maintainability:**  
-  Code must follow modern Python coding standards (PEP8), and should be well-documented.
-
+  Code should adhere to Python best practices (PEP8) and be well-documented, to facilitate future enhancements (e.g., adding image/video parsing).
 - **Scalability:**  
-  While persistent storage is avoided in this design, the system should allow for scaling (e.g., handling multiple documents concurrently).
-
+  The pipeline is designed to work with PDF data now and can be extended to include additional formats later.
 - **Usability:**  
-  The final JSON output must be structured and easy to integrate with downstream systems or evaluation dashboards.
+  The final JSON output must be structured, clearly annotating each rule with its description, rationale, and evaluation method.
 
-## 7. Acceptance Criteria
+## 6. Acceptance Criteria
 
-- The system correctly extracts text from PDFs, images, and transcribed videos.
-- FDA Fact Checker returns baseline rules that match defined FDA guidelines.
-- The pattern analysis module identifies at least three consistent brand-specific preferences across input documents.
-- The rule generator produces a structured JSON file that includes clear rule descriptions, reasoning, and testing methodologies.
-- A test compliance report is generated by applying the rules to new content and accurately reflects compliance status.
+- The system correctly extracts text and metadata from PDFs.
+- The FDA Fact Checker returns baseline compliance rules for each PDF (via mock data based on FDA guidelines).
+- The Pattern Analysis Module identifies key brand-specific patterns from PDF content.
+- The Rule Generation module produces a detailed JSON file with refined rules that incorporate both FDA baseline and brand-specific insights.
+- A compliance report is generated after testing new PDF content against the generated rules.
+- The system demonstrates modular functionality with well-defined unit tests for PDF parsing, analysis, and rule generation.
 
-## 8. Assumptions
+## 7. Assumptions
 
-- The FDA guideline checking functionality already exists and is reliable.
-- Input documents are provided in standard formats and are not encrypted.
-- The overall pipeline is triggered as a one-time job or batch process rather than a persistent service.
-
-## 9. Dependencies
-
-- Python 3.9+
-- External libraries: PyPDF2 / Unstructured.io, pytesseract, spaCy or NLTK, requests, etc.
-- Pre-existing FDA guidelines module (as a reference or API)
-- LLM API access for pattern analysis and rule generation
-
-## 10. Timeline
-
-- **Phase 1:** Document Parsing Module (1 week)
-- **Phase 2:** FDA Fact Checker Integration (1 week)
-- **Phase 3:** Pattern Analysis and Evaluation Modules (2 weeks)
-- **Phase 4:** Rule Generation and Testing Module (2 weeks)
-- **Phase 5:** Integration, Testing, and Refinement (1 week)
-
+- The provided PDF promotional materials are of adequate quality and representative of the brand’s approved content.
+- The FDA Fact Checker module is considered reliable and returns structured baseline rules.
+- The NLP/LLM used for pattern analysis is capable of detecting both keyword-based and semantic patterns from text.
+- The merged evaluation process can reconcile any differences between FDA guidelines and observed brand practices into granular rules.
+- Future enhancements (image/video parsing) will follow a similar modular approach.

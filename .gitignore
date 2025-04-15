@@ -24,6 +24,9 @@ wheels/
 venv/
 env/
 ENV/
+.venv/
+.env/
+.virtualenv/
 
 # IDE
 .idea/
@@ -31,6 +34,8 @@ ENV/
 *.swp
 *.swo
 .DS_Store
+*.sublime-project
+*.sublime-workspace
 
 # Project specific
 logs/
@@ -40,7 +45,29 @@ output/
 .pytest_cache/
 .coverage
 htmlcov/
+docs/*
+figures/
+.cursorrules
+.ruff_cache/
+.cursorrules
+
+# Data files
+*.csv
+*.xlsx
+*.xls
+*.db
+*.sqlite3
 
 # Promotional materials (if they contain sensitive data)
 promotional_materials/*
-!promotional_materials/.gitkeep 
+!promotional_materials/.gitkeep
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars 

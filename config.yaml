@@ -1,3 +1,14 @@
+# Global Models Configuration
+models:
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  tokenizer_model: "sentence-transformers/all-MiniLM-L6-v2"
+  sentiment_model: "distilbert-base-uncased-finetuned-sst-2-english"
+
+# Default Paths Configuration
+paths:
+  default_input: "promotional_materials"
+  default_output: "output/analysis_results.json"
+
 # Document Processing Configuration
 document_processing:
   supported_formats:
@@ -7,10 +18,60 @@ document_processing:
     - jpeg
     - png
     - mp4
+  pdf_parser:
+    strategy: "hi_res" # 'fast' for speed, 'hi_res' for accuracy
+    extract_images: true
+    infer_table_structure: true
+    preserve_layout: true
+    include_page_breaks: true
+    include_metadata: true
   ocr:
     language: eng
     config: --oem 3 --psm 6
   max_file_size_mb: 50
+  min_page_count: 1
+  max_page_count: 1000
+  chunking:
+    # Core chunking parameters
+    max_chunk_size: 500 # Maximum tokens per chunk
+    min_chunk_size: 200 # Minimum tokens per chunk
+    overlap_size: 100 # Number of tokens to overlap between chunks
+
+    # Semantic coherence settings
+    preserve_sections: true # Keep section boundaries
+    respect_paragraphs: true # Don't split paragraphs
+    min_paragraph_length: 50 # Minimum characters in a paragraph
+    max_paragraph_length: 1000 # Maximum characters in a paragraph
+
+    # Section type configuration
+    section_types:
+      header:
+        - introduction
+        - overview
+        - summary
+      body:
+        - main
+        - content
+        - details
+      footer:
+        - conclusion
+        - references
+        - appendix
+
+    # Visual element handling
+    preserve_tables: true
+    preserve_figures: true
+    extract_captions: true
+
+    # Preprocessing
+    remove_headers_footers: false # Keep headers and footers
+    normalize_whitespace: true
+    remove_ocr_artifacts: true
+  visual_elements:
+    detect_tables: true
+    detect_figures: true
+    extract_captions: true
+    preserve_layout: true
 
 # FDA Compliance Configuration
 fda_checker:
@@ -20,6 +81,104 @@ fda_checker:
 
 # Pattern Analysis Configuration
 pattern_analysis:
+  embeddings:
+    dimension: 384
+    similarity_threshold: 0.7
+    min_cluster_size: 3
+    normalize_embeddings: true
+    faiss_index_type: "IndexFlatL2"
+  feature_extraction:
+    sentiment:
+      model: "distilbert-base-uncased-finetuned-sst-2-english"
+      threshold: 0.6
+      include_neutral: true
+    benefit_risk:
+      keywords:
+        benefits:
+          - "benefit"
+          - "effectiveness"
+          - "improvement"
+          - "relief"
+          - "treatment"
+          - "efficacy"
+          - "effective"
+          - "improves"
+          - "leading"
+          - "new"
+          - "innovative"
+          - "breakthrough"
+          - "advanced"
+          - "superior"
+          - "best"
+          - "optimal"
+          - "efficient"
+          - "powerful"
+          - "successful"
+          - "proven"
+          - "safe"
+          - "reliable"
+          - "trusted"
+          - "recommended"
+          - "preferred"
+          - "excellent"
+        risks:
+          - "risk"
+          - "side effect"
+          - "adverse"
+          - "warning"
+          - "caution"
+          - "precaution"
+          - "side effects"
+          - "not recommended"
+          - "contraindicated"
+          - "interaction"
+          - "complication"
+          - "safety"
+          - "monitor"
+          - "consult"
+          - "prescription"
+          - "supervision"
+          - "emergency"
+          - "allergic"
+          - "reaction"
+          - "sensitivity"
+          - "avoid"
+      context_window: 5 # Words to look around keywords
+    tone:
+      promotional_indicators:
+        - "best"
+        - "most"
+        - "only"
+        - "unique"
+        - "exclusive"
+        - "guaranteed"
+        - "promise"
+        - "ensure"
+        - "!"
+        - "!!"
+        - "!!!"
+        - "greatest"
+        - "leading"
+        - "premier"
+        - "revolutionary"
+        - "groundbreaking"
+        - "unprecedented"
+        - "innovative"
+        - "cutting-edge"
+        - "state-of-the-art"
+        - "advanced"
+        - "superior"
+      exclamation_threshold: 2
+      min_indicators: 2
+  clustering:
+    min_clusters: 3
+    max_clusters: 10
+    silhouette_threshold: 0.3
+    use_elbow_method: true
+    min_cluster_size: 3
+    coherence_threshold: 0.6
+  min_pattern_confidence: 0.7
+  pattern_storage_path: "data/patterns"
   min_pattern_occurrence: 3
   confidence_threshold: 0.8
   max_patterns_per_category: 10
@@ -34,12 +193,16 @@ rule_generation:
   output_format: json
   include_test_methodology: true
   max_rules_per_category: 20
+  model: "gpt-3.5-turbo"
+  temperature: 0.7
+  max_tokens: 1000
+  openai_api_key: "" # To be set via environment variable
 
 # Logging Configuration
 logging:
   level: INFO
   file: logs/compliance_analyzer.log
-  max_file_size_mb: 10
+  max_file_size: 10485760 # 10MB
   backup_count: 5
 
 # API Configuration
@@ -48,3 +211,9 @@ api:
   port: 8000
   debug: false
   workers: 4
+
+environment:
+  # Disable Intel OpenMP to avoid conflicts with LLVM OpenMP
+  KMP_DUPLICATE_LIB_OK: "TRUE"
+  # Set number of threads for OpenMP
+  OMP_NUM_THREADS: "4"

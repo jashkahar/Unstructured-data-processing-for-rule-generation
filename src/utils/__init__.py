@@ -2,7 +2,6 @@
 Utility modules for the compliance analyzer.
 """
 
-from .config import load_config, validate_config, get_config_value
 from .types import (
     Document,
     DocumentType,
@@ -18,9 +17,6 @@ from .types import (
 )
 
 __all__ = [
-    'load_config',
-    'validate_config',
-    'get_config_value',
     'Document',
     'DocumentType',
     'FDAComplianceResult',
