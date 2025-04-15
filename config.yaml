@@ -72,6 +72,47 @@ document_processing:
     detect_figures: true
     extract_captions: true
     preserve_layout: true
+  chunk_size: 512
+  chunk_overlap: 100
+  max_chunks_per_doc: 1000
+  max_documents: 50
+  supported_extensions: [".pdf", ".docx", ".txt"]
+
+# Visual Processing Configuration
+visual_processing:
+  # Image rendering parameters
+  tmp_image_dir: "output/tmp_images"
+  dpi: 200
+  image_format: "PNG"
+  max_images_per_document: 20
+
+  # BLIP model configuration
+  blip_model: "Salesforce/blip-image-captioning-base"
+  caption_output: "output/intermediate_results/visual_captions.json"
+  blip_parameters:
+    max_new_tokens: 100
+    num_beams: 4
+
+  # Visual caption prompts
+  prompts:
+    - "A detailed description of this pharmaceutical marketing material:"
+    - "The layout and design of this pharmaceutical advertisement includes:"
+    - "Colors, imagery, and visual elements in this pharmaceutical material:"
+
+  # Visual aggregation and clustering
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  perform_clustering: true
+  num_clusters: 3
+  min_cluster_size: 2
+  visual_patterns_output: "output/intermediate_results/visual_patterns.json"
+  visual_rules_output: "output/intermediate_results/visual_rules.json"
+  enabled: true
+  image_dpi: 300
+  temp_image_dir: "temp_images"
+  caption_model: "Salesforce/blip-image-captioning-base"
+  caption_max_length: 100
+  caption_temperature: 0.7
+  distance_threshold: 0.3
 
 # FDA Compliance Configuration
 fda_checker:
@@ -187,16 +228,33 @@ pattern_analysis:
     - tone
     - visual
     - claims
+  min_cluster_size: 3
+  max_clusters: 30
+  embedding_dimensions: 384
+  clustering_algorithm: "agglomerative"
+  distance_threshold: 0.25
+  max_patterns_per_doc: 100
 
 # Rule Generation Configuration
 rule_generation:
   output_format: json
   include_test_methodology: true
-  max_rules_per_category: 20
-  model: "gpt-3.5-turbo"
+  max_rules_per_category: 10
+  model: "gpt-4.1-nano"
   temperature: 0.7
   max_tokens: 1000
   openai_api_key: "" # To be set via environment variable
+  max_rules_per_category: 10
+  min_confidence_score: 0.65
+  default_severity: "MEDIUM"
+  categories:
+    - "Product Claims"
+    - "Risk Information"
+    - "Comparative Claims"
+    - "Endorsements"
+    - "Indication"
+    - "Visual Elements"
+    - "Regulatory Disclosures"
 
 # Logging Configuration
 logging:
@@ -217,3 +275,23 @@ environment:
   KMP_DUPLICATE_LIB_OK: "TRUE"
   # Set number of threads for OpenMP
   OMP_NUM_THREADS: "4"
+
+system:
+  name: "Pharmaceutical Compliance Analyzer"
+  version: "1.0.0"
+  log_level: "INFO"
+  log_file: "logs/pharma_compliance.log"
+  intermediate_results_dir: "intermediate_results"
+  output_dir: "analysis_results"
+
+rule_merging:
+  similarity_threshold: 0.7
+  prioritize_text_rules: true
+  enable_debug_output: true
+
+models:
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  llm_provider: "openai"
+  llm_model: "gpt-3.5-turbo"
+  max_tokens: 1000
+  temperature: 0.3

@@ -43,6 +43,13 @@ class ComplianceRule(BaseModel):
     rationale: str = Field(..., min_length=20, max_length=500, description="Explanation of why this rule is important")
     supporting_evidence: List[str] = Field(default_factory=list, description="Evidence from cluster analysis supporting this rule")
     
+    # Additional fields for source tracking and rule merging
+    source: Optional[str] = Field(None, description="Source of the rule: 'textual', 'visual', or 'merged'")
+    inference_confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="Confidence score for the rule inference")
+    similarity_score: Optional[float] = Field(None, ge=0.0, le=1.0, description="Similarity score when rules are merged")
+    related_rule_ids: Optional[List[str]] = Field(default_factory=list, description="IDs of related rules")
+    test_methodology: Optional[str] = Field(None, description="Method for testing compliance with this rule")
+    
     @validator('examples')
     def validate_examples(cls, v):
         """Ensure examples are non-empty strings."""
@@ -52,6 +59,60 @@ class ComplianceRule(BaseModel):
     def validate_evidence(cls, v):
         """Ensure evidence items are non-empty strings."""
         return [ev.strip() for ev in v if ev.strip()]
+    
+    @validator('description', 'rationale')
+    def validate_text_fields(cls, v):
+        """Additional validation for text fields."""
+        if not v or not v.strip():
+            raise ValueError("Text field cannot be empty or just whitespace")
+        return v.strip()
+    
+    def merge_with(self, other: 'ComplianceRule', similarity_score: float = 0.0) -> 'ComplianceRule':
+        """Create a new rule by merging this rule with another.
+        
+        Args:
+            other: Another ComplianceRule to merge with
+            similarity_score: Similarity score between the rules
+            
+        Returns:
+            A new ComplianceRule representing the merged rules
+        """
+        # Determine which rule to use as the base for category and severity
+        severity_values = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
+        self_severity_value = severity_values.get(str(self.severity), 2)
+        other_severity_value = severity_values.get(str(other.severity), 2)
+        
+        # Use the highest severity
+        severity = self.severity if self_severity_value >= other_severity_value else other.severity
+        
+        # Combine title with indication if visual aspects are merged
+        title = self.title
+        if getattr(other, 'source', '') == 'visual' and 'visual' in other.title.lower() and 'visual' not in self.title.lower():
+            title = f"{self.title} (Visual Aspects)"
+        
+        # Combine examples, ensuring uniqueness
+        combined_examples = list(set(self.examples + other.examples))
+        
+        # Combine supporting evidence, ensuring uniqueness
+        combined_evidence = list(set(
+            getattr(self, 'supporting_evidence', []) + getattr(other, 'supporting_evidence', [])
+        ))
+        
+        # Create merged rule with enhanced description and rationale
+        merged = ComplianceRule(
+            title=title,
+            description=f"{self.description}\n\nVisual Considerations: {other.description}",
+            category=self.category,  # Use category from first rule
+            severity=severity,
+            examples=combined_examples[:5],  # Limit to 5 examples
+            rationale=f"{self.rationale}\n\nVisual Rationale: {other.rationale}",
+            supporting_evidence=combined_evidence,
+            source="merged",
+            similarity_score=similarity_score,
+            related_rule_ids=[getattr(self, 'id', ''), getattr(other, 'id', '')]
+        )
+        
+        return merged
 
 class RuleGenerator:
     """Generates compliance rules from discovered patterns using LLM."""
@@ -148,8 +209,13 @@ class RuleGenerator:
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the LLM."""
         return """You are a pharmaceutical compliance expert specializing in analyzing promotional content patterns and generating comprehensive compliance rules.
-        Your task is to analyze patterns across multiple clusters of promotional content and derive meaningful compliance rules.
-        Focus on identifying both explicit patterns and implicit guidelines that emerge from the data.
+        Your task is to analyze patterns across multiple clusters of promotional content and derive both EXPLICIT and IMPLICIT compliance rules.
+        
+        Focus on identifying:
+        1. Explicit patterns that directly indicate compliance issues or strengths
+        2. Implicit guidelines that emerge from the data but aren't explicitly stated
+        3. Industry best practices that should be followed based on these patterns
+        
         Ensure your rules are:
         1. Evidence-based and supported by the cluster analysis
         2. Clear and actionable
@@ -197,8 +263,21 @@ class RuleGenerator:
         
         # Add rule generation instructions
         prompt += """
-        Based on this analysis, generate a comprehensive set of compliance rules that capture both explicit patterns and implicit guidelines.
-        Consider the relationships between clusters and emerging patterns across the dataset.
+        Based on this textual pattern analysis from pharmaceutical marketing materials, I need you to:
+        
+        1. Infer both EXPLICIT and IMPLICIT compliance and style rules
+        2. Consider what these patterns reveal about both stated and unstated guidelines
+        3. Identify rules that might not be directly visible but are suggested by the patterns
+        
+        Focus on extracting rules related to:
+        - Regulatory compliance
+        - Balance of benefits and risks
+        - Appropriate tone and language
+        - Evidence-based claims
+        - Clear disclaimers
+        - Structural patterns
+        - Content organization
+        - Visual references in text
         
         IMPORTANT: Your response MUST be a valid JSON array containing rule objects. Do not include any explanatory text before or after the JSON array.
         The JSON array should start with '[' and end with ']' and contain one or more rule objects.
@@ -211,26 +290,16 @@ class RuleGenerator:
                 "category": "One of: Tone, Balance, Claims, Structure, Language, Visual, Disclaimers, Evidence",
                 "severity": "One of: HIGH, MEDIUM, LOW",
                 "examples": ["Specific example from the data", "Another example"],
-                "rationale": "Clear explanation of why this rule is important",
+                "rationale": "Clear explanation of why this rule is important and the reasoning behind inferring this rule",
                 "supporting_evidence": ["Evidence from cluster analysis", "Additional supporting data"]
             }
         ]
-        
-        Focus on:
-        1. Balance of benefits and risks
-        2. Appropriate tone and language
-        3. Evidence-based claims
-        4. Clear disclaimers
-        5. Regulatory compliance
-        6. Structural patterns
-        7. Content organization
-        8. Visual presentation
         
         Ensure each rule:
         1. Is supported by evidence from the cluster analysis
         2. Has clear, actionable guidance
         3. Includes specific examples from the data
-        4. Provides a clear rationale
+        4. Provides a clear rationale explaining your reasoning for inferring this rule
         5. Is properly categorized and severity-rated
         
         Return ONLY the JSON array, with no additional text. Do not include any explanations, notes, or other content outside the JSON array."""
@@ -362,6 +431,14 @@ class RuleGenerator:
             rules = []
             for rule in rules_data:
                 try:
+                    # Add source attribute if not present
+                    if 'source' not in rule:
+                        rule['source'] = 'textual'
+                    
+                    # Set default confidence if not present
+                    if 'inference_confidence' not in rule:
+                        rule['inference_confidence'] = 0.8
+                    
                     # Create ComplianceRule object
                     compliance_rule = ComplianceRule(**rule)
                     rules.append(compliance_rule)
