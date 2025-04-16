@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Any
 from loguru import logger
 from transformers import BlipProcessor, BlipForConditionalGeneration
 from PIL import Image
+import numpy as np
 
 class VisualExtractor:
     """Extracts visual information from images using BLIP."""
@@ -170,4 +171,155 @@ class VisualExtractor:
             
         except Exception as e:
             logger.error(f"Error loading captions from {self.caption_output}: {str(e)}")
-            return [] 
+            return []
+    
+    def generate_caption(self, image_path: str) -> str:
+        """Generate a single caption for an image.
+        
+        Args:
+            image_path: Path to the image file
+            
+        Returns:
+            Generated caption as a string
+        """
+        try:
+            logger.debug(f"Generating caption for image: {image_path}")
+            
+            # Load image
+            image = Image.open(image_path).convert('RGB')
+            
+            # Use the first prompt as default
+            default_prompt = self.prompts[0] if self.prompts else "Describe this pharmaceutical image:"
+            
+            # Generate caption
+            caption = self._generate_caption(image, default_prompt)
+            
+            logger.debug(f"Generated caption: {caption[:50]}...")
+            return caption
+            
+        except Exception as e:
+            logger.error(f"Error generating caption for {image_path}: {str(e)}")
+            return f"Caption generation failed: {str(e)}"
+    
+    def extract_features(self, image_path: str) -> Dict[str, Any]:
+        """Extract visual features from an image.
+        
+        Args:
+            image_path: Path to the image file
+            
+        Returns:
+            Dictionary containing visual features
+        """
+        try:
+            logger.debug(f"Extracting features from image: {image_path}")
+            
+            # Load image
+            image = Image.open(image_path).convert('RGB')
+            
+            # Extract basic image properties
+            features = {
+                "width": image.width,
+                "height": image.height,
+                "aspect_ratio": round(image.width / image.height, 2) if image.height > 0 else 0,
+                "format": image.format or Path(image_path).suffix[1:].upper(),
+                "mode": image.mode
+            }
+            
+            # Extract color information
+            try:
+                # Calculate dominant colors
+                dominant_colors = self._extract_dominant_colors(image)
+                features["dominant_colors"] = dominant_colors
+                
+                # Calculate color balance
+                brightness, saturation = self._calculate_color_stats(image)
+                features["brightness"] = brightness
+                features["saturation"] = saturation
+            except Exception as e:
+                logger.error(f"Error extracting color features: {str(e)}")
+            
+            # Generate captions for multiple aspects as features
+            try:
+                captions = {}
+                for prompt in self.prompts:
+                    caption = self._generate_caption(image, prompt)
+                    prompt_key = prompt.split(':')[0].strip().lower().replace(' ', '_')
+                    captions[prompt_key] = caption
+                features["captions"] = captions
+            except Exception as e:
+                logger.error(f"Error generating caption features: {str(e)}")
+            
+            logger.debug(f"Extracted {len(features)} feature types from {image_path}")
+            return features
+            
+        except Exception as e:
+            logger.error(f"Error extracting features from {image_path}: {str(e)}")
+            return {
+                "error": str(e),
+                "file_path": image_path
+            }
+    
+    def _extract_dominant_colors(self, image: Image.Image, num_colors: int = 5) -> List[str]:
+        """Extract dominant colors from an image.
+        
+        Args:
+            image: PIL Image object
+            num_colors: Number of dominant colors to extract
+            
+        Returns:
+            List of dominant colors as hex strings
+        """
+        # Resize image to speed up processing
+        img_small = image.resize((100, 100))
+        
+        # Convert to RGB if not already
+        if img_small.mode != 'RGB':
+            img_small = img_small.convert('RGB')
+        
+        # Get pixels
+        pixels = np.array(img_small)
+        pixels = pixels.reshape(-1, 3)
+        
+        # Use simple clustering of pixels
+        from sklearn.cluster import KMeans
+        kmeans = KMeans(n_clusters=num_colors)
+        kmeans.fit(pixels)
+        
+        # Get the colors
+        colors = kmeans.cluster_centers_.astype(int)
+        
+        # Convert to hex
+        hex_colors = []
+        for color in colors:
+            hex_color = '#{:02x}{:02x}{:02x}'.format(color[0], color[1], color[2])
+            hex_colors.append(hex_color)
+        
+        return hex_colors
+    
+    def _calculate_color_stats(self, image: Image.Image) -> tuple:
+        """Calculate color statistics of an image.
+        
+        Args:
+            image: PIL Image object
+            
+        Returns:
+            Tuple of (brightness, saturation)
+        """
+        # Convert to HSV for better color analysis
+        try:
+            hsv_image = image.convert('HSV')
+            # Get pixels
+            pixels = np.array(hsv_image)
+            # Extract HSV channels (hue, saturation, value)
+            h, s, v = pixels[:,:,0], pixels[:,:,1], pixels[:,:,2]
+            
+            # Calculate average brightness (value) and saturation
+            brightness = float(np.mean(v) / 255)
+            saturation = float(np.mean(s) / 255)
+            
+            return round(brightness, 2), round(saturation, 2)
+        except Exception:
+            # Simple fallback using RGB
+            pixels = np.array(image)
+            brightness = float(np.mean(pixels) / 255)
+            return round(brightness, 2), 0.0 

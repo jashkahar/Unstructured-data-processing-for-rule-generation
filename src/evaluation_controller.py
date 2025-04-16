@@ -6,6 +6,7 @@ Assesses documents against previously generated compliance rules.
 import os
 import json
 import yaml
+import sys
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 from loguru import logger
@@ -13,11 +14,31 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import copy
 
-from document_processing.processor import DocumentProcessor
-from document_processing.chunking import ChunkingStrategy
-from visual_processing.image_renderer import ImageRenderer
-from visual_processing.visual_extractor import VisualExtractor
-from utils.types import DocumentType
+# Import document processing components
+try:
+    from document_processing.processor import DocumentProcessor
+    from document_processing.chunking import ChunkingStrategy
+    document_processing_available = True
+except ImportError:
+    logger.warning("Document processing imports failed, using fallback methods")
+    document_processing_available = False
+
+# Import visual processing components
+try:
+    from visual_processing.image_renderer import ImageRenderer
+    from visual_processing.visual_extractor import VisualExtractor
+    visual_processing_available = True
+except ImportError:
+    logger.warning("Visual processing imports failed, visual analysis will be disabled")
+    visual_processing_available = False
+
+# Import utils
+try:
+    from utils.types import DocumentType
+    utils_available = True
+except ImportError:
+    logger.warning("Utils imports failed")
+    utils_available = False
 
 # Load environment variables from .env file
 load_dotenv()
@@ -43,28 +64,6 @@ def convert_to_serializable(obj):
     elif hasattr(obj, 'value') and hasattr(obj, '__class__'):
         return obj.value
     elif hasattr(obj, '__dict__'):  # Custom objects
-        # Handle Chunk dataclass specifically
-        if obj.__class__.__name__ == 'Chunk':
-            return {
-                'chunk_id': obj.chunk_id,
-                'section_title': obj.section_title,
-                'content': obj.content,
-                'page_number': obj.page_number,
-                'metadata': obj.metadata,
-                'token_count': obj.token_count,
-                'section_type': obj.section_type,
-                'visual_elements': obj.visual_elements
-            }
-        # Handle ComplianceRule
-        elif obj.__class__.__name__ == 'ComplianceRule' and hasattr(obj, 'title'):
-            return {
-                'title': obj.title,
-                'description': obj.description,
-                'category': obj.category,
-                'severity': convert_to_serializable(obj.severity),
-                'examples': obj.examples,
-                'rationale': obj.rationale
-            }
         # Convert all attributes to serializable format
         return {k: convert_to_serializable(v) for k, v in obj.__dict__.items()}
     return obj
@@ -117,23 +116,50 @@ class ComplianceEvaluator:
             rotation=log_config.get('max_file_size', 10485760),
             retention=log_config.get('backup_count', 5)
         )
-        
+    
     def _initialize_components(self):
-        """Initialize all system components needed for evaluation."""
+        """Initialize all system components."""
         try:
-            # Document processing
-            self.document_processor = DocumentProcessor(self.config.get('document_processing', {}))
-            self.chunking_strategy = ChunkingStrategy(self.config.get('document_processing', {}))
+            # Initialize document processing if available
+            if document_processing_available:
+                try:
+                    self.document_processor = DocumentProcessor(self.config.get('document_processing', {}))
+                    self.chunking_strategy = ChunkingStrategy(self.config.get('document_processing', {}))
+                    logger.info("Initialized document processing components")
+                except Exception as e:
+                    logger.error(f"Error initializing document processing: {str(e)}")
+                    self.document_processor = None
+                    self.chunking_strategy = None
+            else:
+                self.document_processor = None
+                self.chunking_strategy = None
+                logger.info("Document processing components not available")
             
-            # Visual processing if configured
-            if 'visual_processing' in self.config:
-                logger.info("Initializing visual processing components")
-                self.image_renderer = ImageRenderer(self.config.get('visual_processing', {}))
-                self.visual_extractor = VisualExtractor(self.config.get('visual_processing', {}))
+            # Initialize visual processing if available
+            if visual_processing_available and 'visual_processing' in self.config:
+                try:
+                    self.image_renderer = ImageRenderer(self.config.get('visual_processing', {}))
+                    self.visual_extractor = VisualExtractor(self.config.get('visual_processing', {}))
+                    logger.info("Initialized visual processing components")
+                except Exception as e:
+                    logger.error(f"Error initializing visual processing: {str(e)}")
+                    self.image_renderer = None
+                    self.visual_extractor = None
             else:
                 self.image_renderer = None
                 self.visual_extractor = None
+                logger.info("Visual processing components not available")
             
+            # Initialize OpenAI client
+            self._initialize_openai()
+            
+        except Exception as e:
+            logger.error(f"Error initializing components: {str(e)}")
+            raise
+     
+    def _initialize_openai(self):
+        """Initialize OpenAI client for evaluation."""
+        try:
             # Initialize OpenAI client for evaluation
             api_key = os.getenv("OPENAI_API")
             if not api_key:
@@ -151,11 +177,11 @@ class ComplianceEvaluator:
                 logger.error(f"Error validating OpenAI API key: {error_message}")
                 raise ValueError(f"Invalid OpenAI API key: {error_message}")
                 
-            logger.info("Initialized all components for evaluation")
+            logger.info("Initialized OpenAI client for evaluation")
         except Exception as e:
-            logger.error(f"Error initializing components: {str(e)}")
+            logger.error(f"Error initializing OpenAI client: {str(e)}")
             raise
-    
+     
     def _load_rules(self):
         """Load previously generated rules from output directory."""
         try:
@@ -190,35 +216,63 @@ class ComplianceEvaluator:
         """
         try:
             logger.info(f"Evaluating document: {document_path}")
+            document_id = Path(document_path).stem
             
-            # Parse document
-            document = self.document_processor.process_file(document_path)
-            if not document:
-                logger.error(f"Failed to process document: {document_path}")
-                return {"error": f"Failed to process document: {document_path}"}
-                
-            # Extract and chunk document content
-            chunks = self.chunking_strategy.chunk_document(document)
-            logger.info(f"Generated {len(chunks)} text chunks")
-            
-            # Extract visual elements if available
+            # Process document based on available components
+            text_content = ""
             visual_elements = []
-            if self.image_renderer and self.visual_extractor:
-                image_list = self._process_document_images(document_path, document.metadata.get('doc_id', 'unknown'))
-                for image_info in image_list:
-                    if 'caption' in image_info and 'features' in image_info:
-                        visual_elements.append({
-                            'image_path': image_info.get('path', ''),
-                            'caption': image_info.get('caption', ''),
-                            'features': image_info.get('features', {})
-                        })
-                logger.info(f"Extracted {len(visual_elements)} visual elements")
+            
+            # Try document processor if available
+            if document_processing_available and self.document_processor and self.chunking_strategy:
+                try:
+                    document = self.document_processor.process_file(document_path)
+                    if document:
+                        # Extract document ID from metadata if available
+                        if hasattr(document, 'metadata') and hasattr(document.metadata, 'get'):
+                            document_id = document.metadata.get('doc_id', document_id)
+                        
+                        # Extract and chunk document content
+                        chunks = self.chunking_strategy.chunk_document(document)
+                        logger.info(f"Generated {len(chunks)} text chunks")
+                        
+                        # Combine chunks into text content
+                        for chunk in chunks:
+                            if hasattr(chunk, 'content'):
+                                text_content += chunk.content + "\n\n"
+                            elif isinstance(chunk, dict) and 'content' in chunk:
+                                text_content += chunk['content'] + "\n\n"
+                        
+                        # Process images if visual processing is available
+                        if visual_processing_available and self.image_renderer and self.visual_extractor:
+                            try:
+                                image_list = self._process_document_images(document_path, document_id)
+                                visual_elements = image_list
+                                logger.info(f"Extracted {len(visual_elements)} visual elements")
+                            except Exception as e:
+                                logger.error(f"Error processing visual elements: {str(e)}")
+                                logger.info("Continuing evaluation without visual elements")
+                except Exception as e:
+                    logger.error(f"Error using document processor: {str(e)}")
+                    logger.info("Falling back to basic text extraction")
+            
+            # If no text content was extracted, fall back to basic extraction
+            if not text_content:
+                text_content = self._extract_text_from_document(document_path)
+                logger.info(f"Extracted {len(text_content)} characters using fallback method")
+            
+            # If document processing failed, try visual processing directly
+            if not visual_elements and visual_processing_available and self.image_renderer and self.visual_extractor:
+                try:
+                    visual_elements = self._process_document_images(document_path, document_id)
+                    logger.info(f"Extracted {len(visual_elements)} visual elements using direct method")
+                except Exception as e:
+                    logger.error(f"Error processing visual elements directly: {str(e)}")
             
             # Prepare data for evaluation
             evaluation_data = {
                 'document_path': document_path,
-                'document_id': document.metadata.get('doc_id', 'unknown'),
-                'text_chunks': convert_to_serializable(chunks),
+                'document_id': document_id,
+                'document_text': text_content,
                 'visual_elements': visual_elements,
                 'rules': self.rules
             }
@@ -233,7 +287,68 @@ class ComplianceEvaluator:
             
         except Exception as e:
             logger.error(f"Error evaluating document: {str(e)}")
-            raise
+            return {"error": str(e), "document_path": document_path}
+    
+    def _extract_text_from_document(self, document_path: str) -> str:
+        """Extract text from a document.
+        
+        Args:
+            document_path: Path to the document
+            
+        Returns:
+            Extracted text
+        """
+        # For PDF files
+        if document_path.lower().endswith('.pdf'):
+            try:
+                # Try using PyPDF2 if available
+                try:
+                    import PyPDF2
+                    with open(document_path, 'rb') as file:
+                        reader = PyPDF2.PdfReader(file)
+                        text = ""
+                        for page in reader.pages:
+                            text += page.extract_text() + "\n\n"
+                        logger.info(f"Extracted text from PDF using PyPDF2: {len(text)} characters")
+                        return text
+                except ImportError:
+                    logger.warning("PyPDF2 not available, trying other methods")
+                
+                # Try using pdfplumber if available
+                try:
+                    import pdfplumber
+                    with pdfplumber.open(document_path) as pdf:
+                        text = ""
+                        for page in pdf.pages:
+                            text += page.extract_text() + "\n\n"
+                        logger.info(f"Extracted text from PDF using pdfplumber: {len(text)} characters")
+                        return text
+                except ImportError:
+                    logger.warning("pdfplumber not available, using fallback method")
+                
+                # Simple fallback that just returns metadata
+                file_stats = os.stat(document_path)
+                return f"PDF document: {Path(document_path).name}\nSize: {file_stats.st_size} bytes\nUnable to extract content."
+                    
+            except Exception as e:
+                logger.error(f"Error extracting text from PDF: {str(e)}")
+                return f"Error extracting text: {str(e)}"
+        
+        # For text files
+        elif document_path.lower().endswith(('.txt', '.md')):
+            try:
+                with open(document_path, 'r', encoding='utf-8') as file:
+                    text = file.read()
+                    logger.info(f"Extracted text from text file: {len(text)} characters")
+                    return text
+            except Exception as e:
+                logger.error(f"Error reading text file: {str(e)}")
+                return f"Error reading text file: {str(e)}"
+        
+        # For other file types
+        else:
+            logger.warning(f"Unsupported file type for text extraction: {document_path}")
+            return f"Document: {Path(document_path).name}\nUnsupported file type for text extraction."
     
     def _process_document_images(self, document_path: str, document_id: str) -> List[Dict[str, Any]]:
         """Process images from the document.
@@ -246,38 +361,119 @@ class ComplianceEvaluator:
             List of dictionaries containing image information
         """
         try:
-            # Process with image renderer - check method name
-            # The method might be named differently than render_document_images
-            if hasattr(self.image_renderer, 'render_document_images'):
-                rendered_images = self.image_renderer.render_document_images(document_path)
-            elif hasattr(self.image_renderer, 'extract_images'):
-                rendered_images = self.image_renderer.extract_images(document_path)
+            # Check if visual processing is available
+            if not visual_processing_available or not self.image_renderer or not self.visual_extractor:
+                logger.warning("Visual processing not available")
+                return []
+            
+            # Process the document based on its type
+            rendered_images = []
+            
+            # For PDF files, use render_pdf method
+            if document_path.lower().endswith('.pdf'):
+                try:
+                    if hasattr(self.image_renderer, 'render_pdf'):
+                        rendered_images = self.image_renderer.render_pdf(document_path)
+                        logger.info(f"Used render_pdf method, found {len(rendered_images)} images")
+                    else:
+                        logger.warning("ImageRenderer doesn't have render_pdf method for PDF files")
+                except Exception as e:
+                    logger.error(f"Error rendering PDF: {str(e)}")
+            
+            # For standalone image files, use process_standalone_image method
+            elif document_path.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp')):
+                try:
+                    if hasattr(self.image_renderer, 'process_standalone_image'):
+                        single_image = self.image_renderer.process_standalone_image(document_path)
+                        rendered_images = [single_image]
+                        logger.info(f"Used process_standalone_image method for image file")
+                    else:
+                        logger.warning("ImageRenderer doesn't have process_standalone_image method for image files")
+                        # Fallback: create a simple image info dictionary
+                        rendered_images = [{
+                            'document_id': document_id,
+                            'page_number': 1,
+                            'image_path': document_path
+                        }]
+                except Exception as e:
+                    logger.error(f"Error processing image file: {str(e)}")
+            
+            # For other file types (like Word docs), we may not have direct support
             else:
-                logger.warning("Image renderer doesn't have expected methods, skipping image processing")
+                logger.warning(f"No direct image processing method for file type: {Path(document_path).suffix}")
+                
+            if not rendered_images:
+                logger.info("No images found in document")
                 return []
                 
-            logger.info(f"Rendered {len(rendered_images)} images from document")
-            
-            # Extract features and captions
+            # Extract features and captions from the rendered images
             processed_images = []
             for image_info in rendered_images:
-                image_path = image_info.get('path')
+                # Get the image path from the metadata
+                image_path = None
+                if isinstance(image_info, dict):
+                    image_path = image_info.get('image_path') or image_info.get('path')
+                else:
+                    # Try to handle non-dictionary objects
+                    if hasattr(image_info, 'image_path'):
+                        image_path = image_info.image_path
+                    elif hasattr(image_info, 'path'):
+                        image_path = image_info.path
+                
                 if not image_path or not os.path.exists(image_path):
+                    logger.warning(f"Image path invalid or not found: {image_path}")
                     continue
-                    
+                
+                # Get the page number if available
+                page_num = 1
+                if isinstance(image_info, dict) and 'page_number' in image_info:
+                    page_num = image_info.get('page_number')
+                elif hasattr(image_info, 'page_number'):
+                    page_num = image_info.page_number
+                
                 # Extract visual features
-                features = self.visual_extractor.extract_features(image_path)
+                features = {}
+                try:
+                    if hasattr(self.visual_extractor, 'extract_features'):
+                        features = self.visual_extractor.extract_features(image_path)
+                    else:
+                        logger.warning("VisualExtractor doesn't have extract_features method")
+                        # Use basic image properties as features
+                        try:
+                            from PIL import Image
+                            img = Image.open(image_path)
+                            features = {
+                                'width': img.width,
+                                'height': img.height,
+                                'format': img.format,
+                                'mode': img.mode
+                            }
+                        except:
+                            pass
+                except Exception as e:
+                    logger.error(f"Error extracting features from image {image_path}: {str(e)}")
                 
                 # Generate image caption
-                caption = self.visual_extractor.generate_caption(image_path)
+                caption = ""
+                try:
+                    if hasattr(self.visual_extractor, 'generate_caption'):
+                        caption = self.visual_extractor.generate_caption(image_path)
+                    else:
+                        logger.warning("VisualExtractor doesn't have generate_caption method")
+                        caption = f"Image from page {page_num}" 
+                except Exception as e:
+                    logger.error(f"Error generating caption for image {image_path}: {str(e)}")
+                    caption = f"Image from page {page_num} (caption generation failed)"
                 
+                # Add the processed image information
                 processed_images.append({
                     'path': image_path,
-                    'page': image_info.get('page', 0),
+                    'page': page_num,
                     'features': features,
                     'caption': caption
                 })
-                
+            
+            logger.info(f"Successfully processed {len(processed_images)} images from document")
             return processed_images
             
         except Exception as e:
@@ -294,13 +490,70 @@ class ComplianceEvaluator:
             Evaluation results dictionary
         """
         try:
-            # Prepare a prompt for the LLM to evaluate compliance
-            system_prompt = self._get_evaluation_system_prompt()
-            user_prompt = self._create_evaluation_prompt(evaluation_data)
+            # Format the rules for better readability
+            rules_text = ""
+            for i, rule in enumerate(evaluation_data['rules']):
+                rules_text += f"Rule {i+1}:\n"
+                rules_text += f"Title: {rule.get('title', 'Untitled')}\n"
+                rules_text += f"Description: {rule.get('description', 'No description')}\n"
+                rules_text += f"Category: {rule.get('category', 'Uncategorized')}\n"
+                rules_text += f"Severity: {rule.get('severity', 'MEDIUM')}\n"
+                
+                # Include examples if available
+                if 'examples' in rule and rule['examples']:
+                    rules_text += "Examples of violations:\n"
+                    for example in rule['examples']:
+                        rules_text += f"- {example}\n"
+                
+                rules_text += f"Rationale: {rule.get('rationale', 'No rationale provided')}\n\n"
             
+            # Format visual elements
+            visuals_text = ""
+            if evaluation_data.get('visual_elements'):
+                for i, visual in enumerate(evaluation_data['visual_elements']):
+                    visuals_text += f"--- Visual Element {i+1} ---\n"
+                    if 'caption' in visual:
+                        visuals_text += f"Caption: {visual['caption']}\n"
+                    if 'features' in visual:
+                        visuals_text += "Features:\n"
+                        for feature_type, value in visual['features'].items():
+                            if isinstance(value, list):
+                                visuals_text += f"- {feature_type}: {', '.join([str(v) for v in value[:5]])}"
+                                if len(value) > 5:
+                                    visuals_text += " (and more)"
+                                visuals_text += "\n"
+                            else:
+                                visuals_text += f"- {feature_type}: {value}\n"
+                    visuals_text += "\n"
+            
+            # Prepare system prompt
+            system_prompt = self._get_evaluation_system_prompt()
+            
+            # Create user prompt
+            user_prompt = f"""Please evaluate the following document against the compliance rules provided.
+
+Document Information:
+Path: {evaluation_data['document_path']}
+ID: {evaluation_data['document_id']}
+
+COMPLIANCE RULES:
+{rules_text}
+
+DOCUMENT CONTENT:
+{evaluation_data['document_text'][:15000]}
+
+"""
+            # Add visual elements if available
+            if visuals_text:
+                user_prompt += f"\nVISUAL ELEMENTS:\n{visuals_text}\n"
+                
+            user_prompt += """
+Based on the above content, evaluate whether the document complies with each of the rules. Provide a detailed assessment including specific evidence from the document for any violations found.
+"""
+
             # Call OpenAI API - use evaluation config if available
             eval_config = self.config.get('evaluation', {})
-            model = eval_config.get('model', self.config.get('rule_generation', {}).get('model', 'gpt-4'))
+            model = eval_config.get('model', self.config.get('rule_generation', {}).get('model', 'gpt-3.5-turbo'))
             temperature = eval_config.get('temperature', self.config.get('rule_generation', {}).get('temperature', 0.2))
             
             logger.info(f"Using model {model} with temperature {temperature} for evaluation")
@@ -311,26 +564,26 @@ class ComplianceEvaluator:
                 {"role": "user", "content": user_prompt}
             ]
             
-            # Only add response_format for models that support it (newer GPT models)
-            supported_models = ['gpt-4-turbo', 'gpt-4-1106-preview', 'gpt-4-0125-preview', 'gpt-3.5-turbo-1106']
-            if any(supported_model in model for supported_model in supported_models):
-                response = self.client.chat.completions.create(
-                    model=model,
-                    temperature=temperature,
-                    messages=messages,
-                    response_format={"type": "json_object"}
-                )
-            else:
-                # For models that don't support response_format
-                response = self.client.chat.completions.create(
-                    model=model,
-                    temperature=temperature,
-                    messages=messages
-                )
+            # Call OpenAI API
+            response = self.client.chat.completions.create(
+                model=model,
+                temperature=temperature,
+                messages=messages
+            )
             
             # Parse and structure the response
             try:
-                evaluation_response = json.loads(response.choices[0].message.content)
+                content = response.choices[0].message.content
+                # Find JSON part in the response
+                start_idx = content.find('{')
+                end_idx = content.rfind('}') + 1
+                
+                if start_idx != -1 and end_idx != -1:
+                    json_str = content[start_idx:end_idx]
+                    evaluation_response = json.loads(json_str)
+                else:
+                    # If no JSON found, try to parse the whole content
+                    evaluation_response = json.loads(content)
                 
                 # Combine with metadata
                 result = {
@@ -338,10 +591,10 @@ class ComplianceEvaluator:
                     'document_id': evaluation_data['document_id'],
                     'evaluation_results': evaluation_response,
                     'rules_count': len(evaluation_data['rules']),
-                    'chunks_count': len(evaluation_data['text_chunks']),
-                    'visual_elements_count': len(evaluation_data['visual_elements'])
+                    'visual_elements_count': len(evaluation_data.get('visual_elements', []))
                 }
                 
+                logger.info(f"Successfully evaluated document: {evaluation_data['document_path']}")
                 return result
                 
             except json.JSONDecodeError:
@@ -371,7 +624,7 @@ class ComplianceEvaluator:
 
 Your evaluation should:
 
-1. Analyze each text chunk and visual element provided from the document
+1. Analyze the text and visual elements provided from the document
 2. For each compliance rule, determine whether the document complies with the rule or violates it
 3. Provide specific examples from the document for any violations found
 4. Assign a compliance status to each rule: COMPLIANT, MINOR_VIOLATION, MAJOR_VIOLATION, or NOT_APPLICABLE
@@ -380,7 +633,7 @@ Your evaluation should:
 Your response must be a valid JSON object with the following structure:
 {
   "overall_assessment": {
-    "compliance_score": 0.0-1.0,  // Float representing percentage compliance
+    "compliance_score": 0.0-1.0,
     "summary": "Overall assessment of compliance",
     "key_findings": ["List of key findings"],
     "recommended_actions": ["List of recommended actions"]
@@ -396,85 +649,8 @@ Your response must be a valid JSON object with the following structure:
   ]
 }
 
-Be precise and detailed in your analysis. Base your evaluation solely on the content provided in the document chunks and the rules provided. Do not make assumptions about content not included in the input.
+Be precise and detailed in your analysis. Base your evaluation solely on the content provided in the document and the rules provided. Do not make assumptions about content not included in the input.
 """
-    
-    def _create_evaluation_prompt(self, evaluation_data: Dict[str, Any]) -> str:
-        """Create the evaluation prompt from the data.
-        
-        Args:
-            evaluation_data: Data for evaluation
-            
-        Returns:
-            Evaluation prompt string
-        """
-        # Format the rules for better readability
-        rules_text = ""
-        for i, rule in enumerate(evaluation_data['rules']):
-            rules_text += f"Rule {i+1}:\n"
-            rules_text += f"Title: {rule.get('title', 'Untitled')}\n"
-            rules_text += f"Description: {rule.get('description', 'No description')}\n"
-            rules_text += f"Category: {rule.get('category', 'Uncategorized')}\n"
-            rules_text += f"Severity: {rule.get('severity', 'MEDIUM')}\n"
-            
-            # Include examples if available
-            if 'examples' in rule and rule['examples']:
-                rules_text += "Examples of violations:\n"
-                for example in rule['examples']:
-                    rules_text += f"- {example}\n"
-            
-            rules_text += f"Rationale: {rule.get('rationale', 'No rationale provided')}\n\n"
-        
-        # Format text chunks
-        chunks_text = ""
-        for i, chunk in enumerate(evaluation_data['text_chunks']):
-            chunks_text += f"--- Chunk {i+1} ---\n"
-            if 'section_title' in chunk and chunk['section_title']:
-                chunks_text += f"Section: {chunk['section_title']}\n"
-            if 'page_number' in chunk:
-                chunks_text += f"Page: {chunk['page_number']}\n"
-            chunks_text += f"Content: {chunk['content']}\n\n"
-        
-        # Format visual elements
-        visuals_text = ""
-        for i, visual in enumerate(evaluation_data['visual_elements']):
-            visuals_text += f"--- Visual Element {i+1} ---\n"
-            if 'caption' in visual:
-                visuals_text += f"Caption: {visual['caption']}\n"
-            if 'features' in visual:
-                visuals_text += "Features:\n"
-                for feature_type, value in visual['features'].items():
-                    if isinstance(value, list):
-                        visuals_text += f"- {feature_type}: {', '.join(value[:5])}"
-                        if len(value) > 5:
-                            visuals_text += " (and more)"
-                        visuals_text += "\n"
-                    else:
-                        visuals_text += f"- {feature_type}: {value}\n"
-            visuals_text += "\n"
-        
-        # Construct the full prompt
-        prompt = f"""Please evaluate the following document against the compliance rules provided.
-
-Document Information:
-Path: {evaluation_data['document_path']}
-ID: {evaluation_data['document_id']}
-
-COMPLIANCE RULES:
-{rules_text}
-
-DOCUMENT CONTENT:
-
-Text Chunks:
-{chunks_text}
-
-Visual Elements:
-{visuals_text}
-
-Based on the above content, evaluate whether the document complies with each of the rules. Provide a detailed assessment including specific evidence from the document for any violations found.
-"""
-        
-        return prompt
     
     def _save_evaluation_result(self, evaluation_result: Dict[str, Any]) -> None:
         """Save evaluation result to file.
@@ -538,7 +714,7 @@ Based on the above content, evaluate whether the document complies with each of 
             logger.info(f"Evaluating documents in directory: {directory_path}")
             
             # Get list of supported file extensions
-            supported_extensions = self.config.get('document_processing', {}).get('supported_extensions', ['.pdf', '.docx', '.pptx', '.jpg', '.png'])
+            supported_extensions = ['.pdf', '.docx', '.pptx', '.txt', '.md', '.jpg', '.png']
             
             # Find all supported files in directory
             directory = Path(directory_path)
