@@ -8,6 +8,7 @@ models:
 paths:
   default_input: "promotional_materials"
   default_output: "output/analysis_results.json"
+  evaluation_materials: "evaluation_materials"
 
 # Document Processing Configuration
 document_processing:
@@ -240,7 +241,7 @@ rule_generation:
   output_format: json
   include_test_methodology: true
   max_rules_per_category: 10
-  model: "gpt-4.1-nano"
+  model: "gpt-4o-mini"
   temperature: 0.7
   max_tokens: 1000
   openai_api_key: "" # To be set via environment variable
@@ -292,6 +293,23 @@ rule_merging:
 models:
   embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
   llm_provider: "openai"
-  llm_model: "gpt-3.5-turbo"
+  llm_model: "gpt-4o-mini"
   max_tokens: 1000
   temperature: 0.3
+
+# Evaluation Configuration
+evaluation:
+  materials_dir: "evaluation_materials"
+  output_file: "output/evaluation_results.json"
+  model: "gpt-4o-mini"
+  temperature: 0.2
+  compliance_categories:
+    - COMPLIANT
+    - MINOR_VIOLATION
+    - MAJOR_VIOLATION
+    - NOT_APPLICABLE
+  compliance_score_weights:
+    COMPLIANT: 1.0
+    MINOR_VIOLATION: 0.7
+    MAJOR_VIOLATION: 0.0
+    NOT_APPLICABLE: 1.0

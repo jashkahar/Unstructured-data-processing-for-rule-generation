@@ -157,7 +157,7 @@ class RuleGenerator:
             config: Configuration dictionary for rule generation parameters
         """
         self.config = config or {}
-        self.model = self.config.get("model", "gpt-4")
+        self.model = self.config.get("model", "gpt-4o-mini")
         self.temperature = self.config.get("temperature", 0.2)
         self.max_retries = self.config.get("max_retries", 3)
         
