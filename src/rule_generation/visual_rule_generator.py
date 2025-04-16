@@ -94,51 +94,90 @@ class VisualRuleGenerator:
             logger.error(f"Error generating visual rules: {str(e)}")
             return []
     
+    def update_prompt_for_cross_document(self):
+        """Update the system prompt to emphasize cross-document patterns."""
+        self.cross_document_prompt = """You are a pharmaceutical advertising and compliance expert specializing in cross-document visual analysis.
+        
+Your task is to analyze visual patterns discovered ACROSS MULTIPLE pharmaceutical marketing materials and create compliance rules that apply to MULTIPLE DOCUMENTS.
+
+PRIORITIZE patterns that appear consistently in MULTIPLE DOCUMENTS. These cross-document patterns are especially important as they reveal consistent design approaches or compliance strategies.
+
+When creating rules:
+1. EMPHASIZE patterns that appear in multiple documents (these are marked with "is_cross_document": true)
+2. FOCUS on creating rules that apply broadly across promotional materials
+3. HIGHLIGHT when a rule is derived from patterns seen across multiple documents
+4. MENTION specific document names that demonstrate the pattern
+5. INCORPORATE cross-document insights into the rule rationale
+
+Remember that pharmaceutical promotional materials must adhere to strict FDA regulations, including:
+1. Fair balance of risk and benefit information
+2. Accurate and non-misleading claims
+3. Clear presentation of important safety information
+4. Appropriate font sizes and readability
+5. Proper use of imagery and visual elements
+
+For COMBINED categories, use a slash format like "Visual/Claims" for rules that span multiple categories.
+
+Each rule should include:
+1. A concise title (prefixed with "Cross-Document:" if it applies to multiple documents)
+2. A detailed description mentioning how the pattern appears across materials
+3. A clear category or combined category (e.g., "Visual/Claims") 
+4. Severity level (HIGH, MEDIUM, or LOW)
+5. Example violations from DIFFERENT documents when possible
+6. Rationale explaining regulatory importance across the document set
+7. The names of documents where this pattern appears
+
+Focus on creating actionable rules that address both regulatory requirements and effective pharmaceutical marketing practices that span multiple promotional materials."""
+        
+        # Store original prompt for restoring if needed
+        if not hasattr(self, 'original_system_prompt'):
+            self.original_system_prompt = self._get_system_prompt()
+        
+        # Set flag to use cross-document prompt
+        self.use_cross_document_prompt = True
+        
+        logger.info("Updated system prompt to emphasize cross-document patterns")
+    
     def _get_system_prompt(self) -> str:
-        """Get the system prompt for rule generation.
+        """Get the system prompt for the LLM."""
+        # Use cross-document prompt if set
+        if hasattr(self, 'use_cross_document_prompt') and self.use_cross_document_prompt and hasattr(self, 'cross_document_prompt'):
+            return self.cross_document_prompt
         
-        Returns:
-            System prompt string
-        """
-        return """You are a pharmaceutical marketing and compliance expert with deep expertise in visual design and FDA regulations.
+        # Otherwise use the standard prompt
+        return """You are a pharmaceutical advertising and compliance expert specializing in visual analysis.
         
-Your task is to analyze descriptions of pharmaceutical marketing materials and generate compliance rules focused on visual aspects.
+Your task is to analyze visual patterns discovered in pharmaceutical marketing materials and create specific compliance rules.
 
-Focus on INFERRING both EXPLICIT and IMPLICIT design and layout rules that the materials seem to follow. Look for patterns that suggest unstated guidelines.
+Remember that pharmaceutical promotional materials must adhere to strict FDA regulations, including:
+1. Fair balance of risk and benefit information
+2. Accurate and non-misleading claims
+3. Clear presentation of important safety information
+4. Appropriate font sizes and readability
+5. Proper use of imagery and visual elements
 
-The rules should address:
-1. Layout and design elements
-2. Color usage and branding
-3. Image placement and content
-4. Text-image relationships
-5. Visual hierarchy and prominence
-6. Disclaimer visibility and placement
-7. Overall visual tone and impression
-8. Brand consistency elements
-9. Regulatory compliance indicators in visual design
+When creating compliance rules, you will categorize them using one or more of these categories (you can combine multiple with a slash):
+- Visual: Rules specifically about visual elements, imagery, or design
+- Claims: Rules about claims made in visuals or imagery
+- Balance: Rules about balancing risk and benefit information in visuals
+- Structure: Rules about the layout, organization or placement of visual elements
+- Tone: Rules about the emotional tone conveyed by visual elements
+- Disclaimers: Rules about visual presentation of disclaimers or important safety information
+- Evidence: Rules about providing visual evidence for claims
+- Language: Rules about text used within visuals
 
-Each rule should have:
-- A clear, concise title
-- A detailed description
-- A specific category (Visual, Balance, Disclaimers, Structure, etc.)
-- A severity level (HIGH, MEDIUM, LOW)
-- Example applications or violations
-- Explanation of the rule's importance (rationale)
-- Your reasoning for inferring this rule from the visual patterns
+For COMBINED categories, use a slash format like "Visual/Claims" for rules that span multiple categories.
 
-IMPORTANT: Your response must be a valid JSON array containing rule objects. Do not include any explanatory text outside the JSON array.
+Each rule should include:
+1. A concise title
+2. A detailed description
+3. A clear category or combined category (e.g., "Visual/Claims")
+4. Severity level (HIGH, MEDIUM, or LOW)
+5. Example violations based on the pattern analysis
+6. Rationale explaining regulatory importance
+7. Any supporting evidence from the pattern analysis
 
-Example format:
-[
-  {
-    "title": "Rule Title",
-    "description": "Detailed rule description",
-    "category": "Visual",
-    "severity": "HIGH",
-    "examples": ["Example 1", "Example 2"],
-    "rationale": "Why this rule matters and how you inferred it from the visual patterns"
-  }
-]"""
+Focus on creating actionable rules that address both regulatory requirements and effective pharmaceutical marketing."""
     
     def _create_prompt(self, visual_patterns: Dict) -> str:
         """Create a prompt for rule generation.
@@ -242,8 +281,31 @@ IMPORTANT: Focus only on visual aspects of the marketing materials. Your respons
                 try:
                     # Ensure category is valid
                     category_str = rule_data.get("category", "Visual")
-                    if not hasattr(RuleCategory, category_str.upper()):
-                        category_str = "Visual"
+                    
+                    # For combined categories like "Visual/Claims"
+                    if '/' in category_str:
+                        # Verify each part is valid
+                        parts = [part.strip() for part in category_str.split('/')]
+                        valid_parts = []
+                        for part in parts:
+                            if hasattr(RuleCategory, part.upper()):
+                                # Use exact case from enum
+                                valid_parts.append(getattr(RuleCategory, part.upper()).value)
+                            else:
+                                # If not valid, skip this part
+                                logger.warning(f"Invalid category part '{part}' in combined category")
+                        
+                        if valid_parts:
+                            category_str = '/'.join(valid_parts)
+                        else:
+                            # Fallback if no parts are valid
+                            category_str = "Visual"
+                    else:
+                        # For single categories, validate and get correct case
+                        if hasattr(RuleCategory, category_str.upper()):
+                            category_str = getattr(RuleCategory, category_str.upper()).value
+                        else:
+                            category_str = "Visual"  # Default
                     
                     # Ensure severity is valid
                     severity_str = rule_data.get("severity", "MEDIUM")
@@ -259,7 +321,7 @@ IMPORTANT: Focus only on visual aspects of the marketing materials. Your respons
                     rule = ComplianceRule(
                         title=rule_data.get("title", "Missing title"),
                         description=rule_data.get("description", "Missing description"),
-                        category=getattr(RuleCategory, category_str.upper()),
+                        category=category_str,  # Use string value instead of enum
                         severity=getattr(SeverityLevel, severity_str.upper()),
                         examples=rule_data.get("examples", ["No examples provided"]),
                         rationale=rule_data.get("rationale", "No rationale provided"),
@@ -314,7 +376,7 @@ IMPORTANT: Focus only on visual aspects of the marketing materials. Your respons
                 rules_data.append({
                     "title": rule.title,
                     "description": rule.description,
-                    "category": rule.category.value,
+                    "category": rule.category,  # Already a string with our changes
                     "severity": rule.severity.value,
                     "examples": rule.examples,
                     "rationale": rule.rationale,
@@ -358,11 +420,14 @@ IMPORTANT: Focus only on visual aspects of the marketing materials. Your respons
                     related_rule_ids = rule_data.get("related_rule_ids", [])
                     supporting_evidence = rule_data.get("supporting_evidence", [])
                     
+                    # Get category as string
+                    category = rule_data.get("category", "Visual")
+                    
                     # Create ComplianceRule
                     rule = ComplianceRule(
                         title=rule_data.get("title", "Missing title"),
                         description=rule_data.get("description", "Missing description"),
-                        category=getattr(RuleCategory, rule_data.get("category", "VISUAL").upper()),
+                        category=category,  # Use string value
                         severity=getattr(SeverityLevel, rule_data.get("severity", "MEDIUM").upper()),
                         examples=rule_data.get("examples", ["No examples provided"]),
                         rationale=rule_data.get("rationale", "No rationale provided"),

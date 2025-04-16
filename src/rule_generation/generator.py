@@ -37,7 +37,7 @@ class ComplianceRule(BaseModel):
     """Model for a compliance rule with enhanced validation."""
     title: str = Field(..., min_length=5, max_length=100, description="Short title describing the rule")
     description: str = Field(..., min_length=20, max_length=500, description="Detailed description of the rule")
-    category: RuleCategory = Field(..., description="Category of the rule")
+    category: str = Field(..., description="Category of the rule: single category or slash-separated combination")
     severity: SeverityLevel = Field(..., description="Severity level")
     examples: List[str] = Field(default_factory=list, min_items=1, max_items=5, description="Example violations of the rule")
     rationale: str = Field(..., min_length=20, max_length=500, description="Explanation of why this rule is important")
@@ -49,6 +49,25 @@ class ComplianceRule(BaseModel):
     similarity_score: Optional[float] = Field(None, ge=0.0, le=1.0, description="Similarity score when rules are merged")
     related_rule_ids: Optional[List[str]] = Field(default_factory=list, description="IDs of related rules")
     test_methodology: Optional[str] = Field(None, description="Method for testing compliance with this rule")
+    
+    @validator('category')
+    def validate_category(cls, v):
+        """Validate that each part of a combined category is valid."""
+        valid_categories = [cat.value for cat in RuleCategory]
+        
+        # If it's a single valid category, accept it
+        if v in valid_categories:
+            return v
+        
+        # Handle slash-separated categories
+        if '/' in v:
+            parts = [part.strip() for part in v.split('/')]
+            # Ensure all parts are valid categories
+            if all(part in valid_categories for part in parts):
+                return v
+            
+        # If we get here, the category is not valid
+        raise ValueError(f"Category must be one of {valid_categories} or a slash-separated combination of them")
     
     @validator('examples')
     def validate_examples(cls, v):
@@ -98,11 +117,25 @@ class ComplianceRule(BaseModel):
             getattr(self, 'supporting_evidence', []) + getattr(other, 'supporting_evidence', [])
         ))
         
+        # Handle category combining
+        merged_category = self.category
+        other_category = getattr(other, 'category', '')
+        
+        # Only combine if categories are different
+        if other_category and other_category != merged_category:
+            # Extract components of both categories
+            self_components = [c.strip() for c in merged_category.split('/')] if '/' in merged_category else [merged_category]
+            other_components = [c.strip() for c in other_category.split('/')] if '/' in other_category else [other_category]
+            
+            # Combine unique components
+            all_components = list(set(self_components + other_components))
+            merged_category = '/'.join(all_components)
+        
         # Create merged rule with enhanced description and rationale
         merged = ComplianceRule(
             title=title,
             description=f"{self.description}\n\nVisual Considerations: {other.description}",
-            category=self.category,  # Use category from first rule
+            category=merged_category,  # Use combined category
             severity=severity,
             examples=combined_examples[:5],  # Limit to 5 examples
             rationale=f"{self.rationale}\n\nVisual Rationale: {other.rationale}",
@@ -206,8 +239,63 @@ class RuleGenerator:
             logger.error(f"Error in rule generation: {str(e)}")
             return [self._create_fallback_rule(str(e))]
     
+    def update_prompt_for_cross_document(self):
+        """Update the system prompt to emphasize cross-document patterns."""
+        self.cross_document_prompt = """You are a pharmaceutical compliance expert specializing in analyzing patterns ACROSS MULTIPLE promotional materials.
+        
+Your task is to analyze patterns discovered in MULTIPLE DOCUMENTS and derive compliance rules that apply ACROSS documents.
+
+PRIORITIZE finding patterns that appear consistently across different promotional materials. These cross-document patterns are especially important as they reveal consistent compliance approaches or potential issues.
+
+Focus especially on identifying:
+1. Patterns that appear in MULTIPLE DOCUMENTS, especially those marked with document references
+2. Common practices that span different materials from the same brand
+3. Industry-wide compliance approaches visible across the entire collection
+
+When creating rules:
+1. EMPHASIZE patterns that appear in multiple documents
+2. HIGHLIGHT when a rule is derived from patterns seen across multiple documents
+3. MENTION specific documents that demonstrate the pattern
+4. INCORPORATE cross-document insights into the rule rationale
+5. PREFIX rule titles with "Cross-Document:" if they apply to multiple documents
+
+When creating compliance rules, categorize them using one or more of these categories:
+- Tone: Rules about emotional tone or communication style
+- Balance: Rules about balancing risk and benefit information
+- Claims: Rules about product claims or statements
+- Structure: Rules about document organization or layout
+- Language: Rules about word choice or phraseology
+- Visual: Rules about visual elements or design
+- Disclaimers: Rules about warning statements or limitations
+- Evidence: Rules about supporting data or citations
+
+For rules that span multiple aspects, you can create COMBINED categories using a slash format, like "Claims/Evidence" or "Visual/Disclaimers".
+
+Ensure your rules are:
+1. Evidence-based and supported by patterns found in MULTIPLE DOCUMENTS
+2. Clear and actionable across different promotional materials
+3. Properly categorized (using single categories or combined categories with slashes)
+4. Include specific examples from DIFFERENT documents when possible
+5. Provide clear rationale explaining why this pattern matters across the document set
+
+Your output must be a valid JSON array of rule objects that can be automatically processed, with emphasis on rules that apply to multiple documents."""
+        
+        # Store original prompt for restoring if needed
+        if not hasattr(self, 'original_system_prompt'):
+            self.original_system_prompt = self._get_system_prompt()
+        
+        # Set flag to use cross-document prompt
+        self.use_cross_document_prompt = True
+        
+        logger.info("Updated system prompt to emphasize cross-document patterns")
+    
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the LLM."""
+        # Use cross-document prompt if set
+        if hasattr(self, 'use_cross_document_prompt') and self.use_cross_document_prompt and hasattr(self, 'cross_document_prompt'):
+            return self.cross_document_prompt
+            
+        # Otherwise use the standard prompt
         return """You are a pharmaceutical compliance expert specializing in analyzing promotional content patterns and generating comprehensive compliance rules.
         Your task is to analyze patterns across multiple clusters of promotional content and derive both EXPLICIT and IMPLICIT compliance rules.
         
@@ -216,29 +304,26 @@ class RuleGenerator:
         2. Implicit guidelines that emerge from the data but aren't explicitly stated
         3. Industry best practices that should be followed based on these patterns
         
+        When creating compliance rules, you will categorize them using one or more of these categories:
+        - Tone: Rules about emotional tone or communication style
+        - Balance: Rules about balancing risk and benefit information
+        - Claims: Rules about product claims or statements
+        - Structure: Rules about document organization or layout
+        - Language: Rules about word choice or phraseology
+        - Visual: Rules about visual elements or design
+        - Disclaimers: Rules about warning statements or limitations
+        - Evidence: Rules about supporting data or citations
+        
+        For rules that span multiple aspects, you can create COMBINED categories using a slash format, like "Claims/Evidence" or "Visual/Disclaimers".
+        
         Ensure your rules are:
         1. Evidence-based and supported by the cluster analysis
         2. Clear and actionable
-        3. Properly categorized and severity-rated
+        3. Properly categorized (using single categories or combined categories with slashes)
         4. Include specific examples from the data
         5. Provide clear rationale for each rule
         
-        IMPORTANT: Your response MUST be a valid JSON array containing rule objects. Do not include any explanatory text before or after the JSON array.
-        The JSON array should start with '[' and end with ']' and contain one or more rule objects.
-        Each rule object should have the following fields: title, description, category, severity, examples, rationale, and supporting_evidence.
-        
-        Example format:
-        [
-          {
-            "title": "Rule Title",
-            "description": "Rule description",
-            "category": "Tone",
-            "severity": "HIGH",
-            "examples": ["Example 1", "Example 2"],
-            "rationale": "Rationale for the rule",
-            "supporting_evidence": ["Evidence 1", "Evidence 2"]
-          }
-        ]"""
+        Your output must be a valid JSON array of rule objects that can be automatically processed."""
     
     def _create_rule_generation_prompt(self, patterns: Dict) -> str:
         """Create comprehensive prompt for rule generation.
@@ -439,6 +524,37 @@ class RuleGenerator:
                     if 'inference_confidence' not in rule:
                         rule['inference_confidence'] = 0.8
                     
+                    # Process category to ensure it's in the right format
+                    if 'category' in rule:
+                        category_str = rule['category']
+                        
+                        # For combined categories like "Visual/Claims"
+                        if '/' in category_str:
+                            # Verify each part is valid
+                            parts = [part.strip() for part in category_str.split('/')]
+                            valid_parts = []
+                            for part in parts:
+                                if hasattr(RuleCategory, part.upper()):
+                                    # Use exact case from enum
+                                    valid_parts.append(getattr(RuleCategory, part.upper()).value)
+                                else:
+                                    # If not valid, skip this part
+                                    logger.warning(f"Invalid category part '{part}' in combined category")
+                            
+                            if valid_parts:
+                                rule['category'] = '/'.join(valid_parts)
+                            else:
+                                # Fallback if no parts are valid
+                                rule['category'] = "Structure"
+                        else:
+                            # For single categories, validate and get correct case
+                            if hasattr(RuleCategory, category_str.upper()):
+                                rule['category'] = getattr(RuleCategory, category_str.upper()).value
+                            else:
+                                rule['category'] = "Structure"  # Default
+                    else:
+                        rule['category'] = "Structure"  # Default if missing
+                    
                     # Create ComplianceRule object
                     compliance_rule = ComplianceRule(**rule)
                     rules.append(compliance_rule)
@@ -491,7 +607,7 @@ class RuleGenerator:
         return ComplianceRule(
             title="Rule Generation Error",
             description="There was an error generating compliance rules. Please check the logs for details.",
-            category=RuleCategory.STRUCTURE,
+            category="Structure",  # Use string value instead of enum
             severity=SeverityLevel.HIGH,
             examples=["Error in rule generation process"],
             rationale=f"Rule generation failed: {error_message}",

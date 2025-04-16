@@ -4,7 +4,7 @@ Implements hierarchical splitting and adaptive chunk sizing for document content
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Set, Tuple
 from transformers import AutoTokenizer
 from loguru import logger
@@ -12,15 +12,16 @@ from datetime import datetime
 
 @dataclass
 class Chunk:
-    """Represents a chunk of document content with metadata."""
-    chunk_id: int
-    section_title: str
+    """Represents a chunk of a document."""
+    chunk_id: str
+    section_title: Optional[str]
     content: str
-    page_number: Optional[int] = None
-    metadata: Optional[Dict] = None
-    token_count: Optional[int] = None
-    section_type: Optional[str] = None  # header, body, footer, etc.
-    visual_elements: Optional[Dict] = None  # For future image/table support
+    page_number: Optional[int]
+    metadata: Dict = field(default_factory=dict)
+    token_count: int = 0
+    section_type: Optional[str] = None
+    visual_elements: List[Dict] = field(default_factory=list)
+    document_id: Optional[str] = None  # Add document_id to track source document in cross-document analysis
 
 class ChunkingStrategy:
     """Implements hierarchical document chunking with adaptive sizing."""

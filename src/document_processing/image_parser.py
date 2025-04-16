@@ -69,7 +69,8 @@ class ImageParser:
                 "width": width,
                 "height": height,
                 "color_mode": mode,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "is_standalone_image": True  # Flag to indicate this is a standalone image
             }
             
             # Create document object

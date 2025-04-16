@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from loguru import logger
 from pdf2image import convert_from_path
+from PIL import Image
 
 class ImageRenderer:
     """Converts PDF pages to images for visual analysis."""
@@ -80,6 +81,39 @@ class ImageRenderer:
             logger.error(f"Error rendering PDF {pdf_path}: {str(e)}")
             raise
     
+    def process_standalone_image(self, image_path: str) -> Dict:
+        """Process a standalone image for visual analysis.
+        
+        Args:
+            image_path: Path to the image file
+            
+        Returns:
+            Dictionary containing image information
+        """
+        try:
+            image_id = Path(image_path).stem
+            logger.info(f"Processing standalone image: {image_path}")
+            
+            # Get image metadata
+            image = Image.open(image_path)
+            
+            # Create metadata similar to PDF page images
+            image_metadata = {
+                "document_id": image_id,
+                "page_number": 1,  # Single image is page 1
+                "image_path": image_path,  # Use original path
+                "width": image.width,
+                "height": image.height,
+                "format": image.format if hasattr(image, 'format') else Path(image_path).suffix[1:].upper()
+            }
+            
+            logger.info(f"Processed standalone image: {image_path}")
+            return image_metadata
+            
+        except Exception as e:
+            logger.error(f"Error processing standalone image {image_path}: {str(e)}")
+            raise
+    
     def clean_up_images(self, image_paths: Optional[List[Dict]] = None) -> None:
         """Clean up temporary images.
         
@@ -88,12 +122,13 @@ class ImageRenderer:
         """
         try:
             if image_paths:
-                # Delete specific images
+                # Delete specific images, but only if they are in the temporary directory
                 for img_info in image_paths:
                     img_path = img_info.get("image_path")
-                    if img_path and os.path.exists(img_path):
+                    # Only delete if it's in our temporary directory
+                    if img_path and os.path.exists(img_path) and str(self.output_dir) in img_path:
                         os.remove(img_path)
-                logger.info(f"Cleaned up {len(image_paths)} images")
+                logger.info(f"Cleaned up temporary images")
             else:
                 # Delete all images in the output directory
                 count = 0
