@@ -34,9 +34,9 @@ class VisualRuleGenerator:
         self.rules_output.parent.mkdir(parents=True, exist_ok=True)
         
         # Initialize OpenAI client
-        api_key = os.getenv("OPENAI_API")
+        api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            raise ValueError("OpenAI API key is required for rule generation. Please set the OPENAI_API environment variable.")
+            raise ValueError("OpenAI API key is required for rule generation. Please set the OPENAI_API_KEY environment variable.")
         
         self.client = OpenAI()
         self.client.api_key = api_key

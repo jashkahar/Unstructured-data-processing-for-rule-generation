@@ -162,7 +162,7 @@ class RuleGenerator:
         self.max_retries = self.config.get("max_retries", 3)
         
         # Initialize OpenAI client
-        api_key = os.getenv("OPENAI_API")
+        api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OpenAI API key is required for rule generation. Please set the OPENAI_API_KEY environment variable.")
         
