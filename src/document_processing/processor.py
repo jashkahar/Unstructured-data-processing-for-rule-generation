@@ -102,7 +102,8 @@ class DocumentProcessor:
                 return self.pdf_parser.parse(file_path)
             elif doc_type == DocumentType.IMAGE:
                 logger.info(f"Processing Image file: {file_path}")
-                return self.image_parser.parse(file_path)
+                document = self.image_parser.parse(file_path)
+                return document
             elif doc_type == DocumentType.VIDEO:
                 logger.info(f"Processing Video file: {file_path}")
                 return self.video_parser.parse(file_path)
